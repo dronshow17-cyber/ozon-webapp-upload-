@@ -26,9 +26,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
 if STATIC_DIR.exists():
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+
+def log(message: str):
+    print(f"[WEBAPP] {message}", flush=True)
 
 
 def yandex_headers() -> dict:
@@ -40,13 +43,45 @@ def yandex_headers() -> dict:
     }
 
 
+def normalize_stage(stage: str = None, step: str = None) -> str:
+    """
+    Поддерживаем оба варианта с фронта:
+    - stage=locality/sales/stocks
+    - step=1/2/3
+    """
+    value = (stage or step or "").strip().lower()
+
+    mapping = {
+        "1": "locality",
+        "2": "sales",
+        "3": "stocks",
+        "locality": "locality",
+        "sales": "sales",
+        "stocks": "stocks",
+    }
+
+    normalized = mapping.get(value)
+
+    if not normalized:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid stage. Expected stage=locality/sales/stocks or step=1/2/3"
+        )
+
+    return normalized
+
+
 def ensure_yandex_folder(path: str) -> None:
+    log(f"ensure folder: {path}")
+
     response = requests.put(
         "https://cloud-api.yandex.net/v1/disk/resources",
         headers=yandex_headers(),
         params={"path": path},
-        timeout=60,
+        timeout=30,
     )
+
+    log(f"ensure folder response: {response.status_code}")
 
     if response.status_code not in [200, 201, 409]:
         raise HTTPException(
@@ -56,12 +91,16 @@ def ensure_yandex_folder(path: str) -> None:
 
 
 def get_yandex_upload_url(remote_path: str) -> str:
+    log(f"get upload url for: {remote_path}")
+
     response = requests.get(
         "https://cloud-api.yandex.net/v1/disk/resources/upload",
         headers=yandex_headers(),
         params={"path": remote_path, "overwrite": "true"},
-        timeout=60,
+        timeout=30,
     )
+
+    log(f"get upload url response: {response.status_code}")
 
     if response.status_code != 200:
         raise HTTPException(
@@ -81,16 +120,27 @@ def get_yandex_upload_url(remote_path: str) -> str:
 
 
 def upload_to_yandex_disk(local_path: Path, remote_path: str) -> None:
+    file_size_mb = round(local_path.stat().st_size / 1024 / 1024, 2)
+    log(f"start upload to yandex: {remote_path}, size={file_size_mb} MB")
+
     upload_url = get_yandex_upload_url(remote_path)
 
     with local_path.open("rb") as file:
-        response = requests.put(upload_url, data=file, timeout=600)
+        response = requests.put(
+            upload_url,
+            data=file,
+            timeout=300,
+        )
+
+    log(f"upload to yandex response: {response.status_code}")
 
     if response.status_code not in [200, 201, 202]:
         raise HTTPException(
             status_code=500,
             detail=f"Cannot upload file to Yandex.Disk: {response.text}",
         )
+
+    log("upload to yandex complete")
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -115,6 +165,8 @@ async def health():
         "static_dir": str(STATIC_DIR),
         "upload_html_exists": (STATIC_DIR / "upload.html").exists(),
         "yandex_token_exists": bool(YANDEX_DISK_TOKEN),
+        "yandex_upload_folder": YANDEX_UPLOAD_FOLDER,
+        "max_upload_mb": MAX_UPLOAD_MB,
     }
 
 
@@ -122,10 +174,24 @@ async def health():
 async def upload_file(
     file: UploadFile = File(...),
     user_id: str = Form(...),
-    stage: str = Form(...),
+    stage: str = Form(None),
+    step: str = Form(None),
 ):
-    if stage not in {"locality", "sales", "stocks"}:
-        raise HTTPException(status_code=400, detail="Invalid stage")
+    """
+    Принимает файл из Telegram WebApp.
+
+    Поддерживает два варианта формы:
+    - stage=locality/sales/stocks
+    - step=1/2/3
+
+    Возвращает payload, который upload.html отправляет обратно боту через tg.sendData().
+    """
+    normalized_stage = normalize_stage(stage=stage, step=step)
+
+    log(
+        f"POST /upload started: "
+        f"user_id={user_id}, stage={normalized_stage}, filename={file.filename}"
+    )
 
     filename = file.filename or "upload"
     suffix = Path(filename).suffix.lower()
@@ -144,44 +210,67 @@ async def upload_file(
     safe_user_id = "".join(ch for ch in str(user_id) if ch.isdigit()) or "unknown"
     timestamp = int(time.time())
 
-    temp_path = temp_dir / f"{safe_user_id}_{stage}_{timestamp}{suffix}"
+    temp_path = temp_dir / f"{safe_user_id}_{normalized_stage}_{timestamp}{suffix}"
 
     size = 0
     limit = MAX_UPLOAD_MB * 1024 * 1024
 
-    with temp_path.open("wb") as out:
-        while True:
-            chunk = await file.read(1024 * 1024)
+    log(f"start saving temp file: {temp_path}")
 
-            if not chunk:
-                break
+    try:
+        with temp_path.open("wb") as out:
+            while True:
+                chunk = await file.read(1024 * 1024)
 
-            size += len(chunk)
+                if not chunk:
+                    break
 
-            if size > limit:
-                temp_path.unlink(missing_ok=True)
-                raise HTTPException(
-                    status_code=413,
-                    detail=f"File is larger than {MAX_UPLOAD_MB} MB"
-                )
+                size += len(chunk)
 
-            out.write(chunk)
+                if size > limit:
+                    temp_path.unlink(missing_ok=True)
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"File is larger than {MAX_UPLOAD_MB} MB"
+                    )
 
-    ensure_yandex_folder(YANDEX_UPLOAD_FOLDER)
+                out.write(chunk)
 
-    remote_path = f"{YANDEX_UPLOAD_FOLDER}/{safe_user_id}_{stage}_{timestamp}{suffix}"
+        size_mb = round(size / 1024 / 1024, 2)
+        log(f"temp file saved: {temp_path}, size={size_mb} MB")
 
-    upload_to_yandex_disk(temp_path, remote_path)
+        ensure_yandex_folder(YANDEX_UPLOAD_FOLDER)
 
-    temp_path.unlink(missing_ok=True)
+        remote_path = f"{YANDEX_UPLOAD_FOLDER}/{safe_user_id}_{normalized_stage}_{timestamp}{suffix}"
 
-    payload = {
-        "type": "yandex_disk_upload",
-        "stage": stage,
-        "user_id": safe_user_id,
-        "filename": filename,
-        "remote_path": remote_path,
-        "size_bytes": size,
-    }
+        upload_to_yandex_disk(temp_path, remote_path)
 
-    return JSONResponse(payload)
+        payload = {
+            "type": "yandex_disk_upload",
+            "stage": normalized_stage,
+            "user_id": safe_user_id,
+            "filename": filename,
+            "remote_path": remote_path,
+            "size_bytes": size,
+        }
+
+        log(f"POST /upload complete: {payload}")
+
+        return JSONResponse(payload)
+
+    except HTTPException:
+        raise
+
+    except Exception as error:
+        log(f"POST /upload error: {repr(error)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Upload failed: {error}"
+        )
+
+    finally:
+        try:
+            temp_path.unlink(missing_ok=True)
+            log(f"temp file removed: {temp_path}")
+        except Exception as cleanup_error:
+            log(f"temp cleanup error: {repr(cleanup_error)}")
