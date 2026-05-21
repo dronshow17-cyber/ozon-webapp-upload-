@@ -158,6 +158,12 @@
     progressBar.style.width = percent + "%";
   }
 
+  function getUploadUrl() {
+    // В Telegram WebView относительный путь иногда не доходит до backend.
+    // Поэтому используем абсолютный HTTPS URL текущего WebApp-домена.
+    return window.location.origin + "/upload";
+  }
+
   function uploadWithProgress(url, formData, timeoutMs = 180000) {
     return new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
@@ -199,7 +205,7 @@
 
       xhr.onerror = function() {
         clearTimeout(timeout);
-        reject(new Error("Ошибка сети при загрузке файла."));
+        reject(new Error("Ошибка сети при загрузке файла. URL: " + url));
       };
 
       xhr.onabort = function() {
@@ -229,10 +235,12 @@
 
     uploadBtn.disabled = true;
     setProgress(0);
-    setStatus("⏳ Начинаю загрузку...");
+
+    const uploadUrl = getUploadUrl();
+    setStatus("⏳ Начинаю загрузку...\nURL: " + uploadUrl);
 
     try {
-      const data = await uploadWithProgress("/upload", formData, 180000);
+      const data = await uploadWithProgress(uploadUrl, formData, 180000);
 
       setProgress(100);
       setStatus("✅ Файл загружен. Передаю данные боту...");
