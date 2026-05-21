@@ -1,276 +1,133 @@
 import os
 import time
-from pathlib import Path
-
+import shutil
 import requests
-from fastapi import FastAPI, File, Form, UploadFile, HTTPException
+
+from pathlib import Path
+from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.responses import HTMLResponse, JSONResponse
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-
-BASE_DIR = Path(__file__).resolve().parent
+BASE_DIR = Path(__file__).parent
 STATIC_DIR = BASE_DIR / "static"
 
 YANDEX_DISK_TOKEN = os.getenv("YANDEX_DISK_TOKEN")
-YANDEX_UPLOAD_FOLDER = os.getenv("YANDEX_UPLOAD_FOLDER", "/MarketCopilotUploads")
-MAX_UPLOAD_MB = int(os.getenv("MAX_UPLOAD_MB", "200"))
+YANDEX_UPLOAD_FOLDER = os.getenv("YANDEX_UPLOAD_FOLDER", "MarketCopilotUploads")
 
-app = FastAPI(title="MarketCopilot Upload WebApp")
+TEMP_DIR = "/tmp/marketcopilot_uploads"
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+os.makedirs(TEMP_DIR, exist_ok=True)
 
-if STATIC_DIR.exists():
-    app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+app = FastAPI()
 
-
-def log(message: str):
-    print(f"[WEBAPP] {message}", flush=True)
-
-
-def yandex_headers() -> dict:
-    if not YANDEX_DISK_TOKEN:
-        raise HTTPException(status_code=500, detail="YANDEX_DISK_TOKEN is not set")
-
-    return {
-        "Authorization": f"OAuth {YANDEX_DISK_TOKEN}"
-    }
-
-
-def normalize_stage(stage: str = None, step: str = None) -> str:
-    """
-    Поддерживаем оба варианта с фронта:
-    - stage=locality/sales/stocks
-    - step=1/2/3
-    """
-    value = (stage or step or "").strip().lower()
-
-    mapping = {
-        "1": "locality",
-        "2": "sales",
-        "3": "stocks",
-        "locality": "locality",
-        "sales": "sales",
-        "stocks": "stocks",
-    }
-
-    normalized = mapping.get(value)
-
-    if not normalized:
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid stage. Expected stage=locality/sales/stocks or step=1/2/3"
-        )
-
-    return normalized
-
-
-def ensure_yandex_folder(path: str) -> None:
-    log(f"ensure folder: {path}")
-
-    response = requests.put(
-        "https://cloud-api.yandex.net/v1/disk/resources",
-        headers=yandex_headers(),
-        params={"path": path},
-        timeout=30,
-    )
-
-    log(f"ensure folder response: {response.status_code}")
-
-    if response.status_code not in [200, 201, 409]:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Cannot create Yandex.Disk folder: {response.text}",
-        )
-
-
-def get_yandex_upload_url(remote_path: str) -> str:
-    log(f"get upload url for: {remote_path}")
-
-    response = requests.get(
-        "https://cloud-api.yandex.net/v1/disk/resources/upload",
-        headers=yandex_headers(),
-        params={"path": remote_path, "overwrite": "true"},
-        timeout=30,
-    )
-
-    log(f"get upload url response: {response.status_code}")
-
-    if response.status_code != 200:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Cannot get Yandex.Disk upload URL: {response.text}",
-        )
-
-    href = response.json().get("href")
-
-    if not href:
-        raise HTTPException(
-            status_code=500,
-            detail="Yandex.Disk did not return upload href"
-        )
-
-    return href
-
-
-def upload_to_yandex_disk(local_path: Path, remote_path: str) -> None:
-    file_size_mb = round(local_path.stat().st_size / 1024 / 1024, 2)
-    log(f"start upload to yandex: {remote_path}, size={file_size_mb} MB")
-
-    upload_url = get_yandex_upload_url(remote_path)
-
-    with local_path.open("rb") as file:
-        response = requests.put(
-            upload_url,
-            data=file,
-            timeout=300,
-        )
-
-    log(f"upload to yandex response: {response.status_code}")
-
-    if response.status_code not in [200, 201, 202]:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Cannot upload file to Yandex.Disk: {response.text}",
-        )
-
-    log("upload to yandex complete")
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
 @app.get("/", response_class=HTMLResponse)
 async def index():
-    upload_html_path = STATIC_DIR / "upload.html"
+    with open(STATIC_DIR / "upload.html", "r", encoding="utf-8") as f:
+        return f.read()
 
-    if not upload_html_path.exists():
-        return HTMLResponse(
-            "<h3>Upload page not found</h3>"
-            "<p>Проверь, что файл лежит здесь: static/upload.html</p>",
-            status_code=500
+
+def upload_to_yandex(local_path: str, remote_path: str):
+    headers = {
+        "Authorization": f"OAuth {YANDEX_DISK_TOKEN}"
+    }
+
+    print(f"[WEBAPP] create folder: {YANDEX_UPLOAD_FOLDER}")
+
+    folder_url = "https://cloud-api.yandex.net/v1/disk/resources"
+
+    try:
+        requests.put(
+            folder_url,
+            headers=headers,
+            params={"path": YANDEX_UPLOAD_FOLDER},
+            timeout=20
+        )
+    except Exception as e:
+        print("[WEBAPP] folder create error:", e)
+
+    print(f"[WEBAPP] get upload url: {remote_path}")
+
+    upload_url_resp = requests.get(
+        "https://cloud-api.yandex.net/v1/disk/resources/upload",
+        headers=headers,
+        params={
+            "path": remote_path,
+            "overwrite": "true"
+        },
+        timeout=30
+    )
+
+    print("[WEBAPP] upload url status:", upload_url_resp.status_code)
+
+    upload_data = upload_url_resp.json()
+
+    upload_url = upload_data.get("href")
+
+    if not upload_url:
+        raise Exception(f"YANDEX ERROR: {upload_data}")
+
+    print("[WEBAPP] start upload to yadisk")
+
+    with open(local_path, "rb") as f:
+        upload_resp = requests.put(
+            upload_url,
+            files={"file": f},
+            timeout=600
         )
 
-    html = upload_html_path.read_text(encoding="utf-8")
-    return HTMLResponse(html)
+    print("[WEBAPP] upload finished:", upload_resp.status_code)
 
-
-@app.get("/health")
-async def health():
-    return {
-        "ok": True,
-        "static_dir": str(STATIC_DIR),
-        "upload_html_exists": (STATIC_DIR / "upload.html").exists(),
-        "yandex_token_exists": bool(YANDEX_DISK_TOKEN),
-        "yandex_upload_folder": YANDEX_UPLOAD_FOLDER,
-        "max_upload_mb": MAX_UPLOAD_MB,
-    }
+    return upload_resp.status_code in [200, 201, 202]
 
 
 @app.post("/upload")
 async def upload_file(
     file: UploadFile = File(...),
-    user_id: str = Form(...),
-    stage: str = Form(None),
-    step: str = Form(None),
+    stage: str = Form(...)
 ):
-    """
-    Принимает файл из Telegram WebApp.
-
-    Поддерживает два варианта формы:
-    - stage=locality/sales/stocks
-    - step=1/2/3
-
-    Возвращает payload, который upload.html отправляет обратно боту через tg.sendData().
-    """
-    normalized_stage = normalize_stage(stage=stage, step=step)
-
-    log(
-        f"POST /upload started: "
-        f"user_id={user_id}, stage={normalized_stage}, filename={file.filename}"
-    )
-
-    filename = file.filename or "upload"
-    suffix = Path(filename).suffix.lower()
-
-    allowed_suffixes = {".xlsx", ".xls", ".csv"}
-
-    if suffix not in allowed_suffixes:
-        raise HTTPException(
-            status_code=400,
-            detail="Only .xlsx, .xls, .csv are allowed"
-        )
-
-    temp_dir = Path("/tmp/marketcopilot_uploads")
-    temp_dir.mkdir(parents=True, exist_ok=True)
-
-    safe_user_id = "".join(ch for ch in str(user_id) if ch.isdigit()) or "unknown"
-    timestamp = int(time.time())
-
-    temp_path = temp_dir / f"{safe_user_id}_{normalized_stage}_{timestamp}{suffix}"
-
-    size = 0
-    limit = MAX_UPLOAD_MB * 1024 * 1024
-
-    log(f"start saving temp file: {temp_path}")
-
     try:
-        with temp_path.open("wb") as out:
-            while True:
-                chunk = await file.read(1024 * 1024)
+        print(f"[WEBAPP] upload started: {file.filename}")
 
-                if not chunk:
-                    break
+        timestamp = int(time.time())
 
-                size += len(chunk)
+        local_filename = f"{timestamp}_{file.filename}"
 
-                if size > limit:
-                    temp_path.unlink(missing_ok=True)
-                    raise HTTPException(
-                        status_code=413,
-                        detail=f"File is larger than {MAX_UPLOAD_MB} MB"
-                    )
+        local_path = os.path.join(TEMP_DIR, local_filename)
 
-                out.write(chunk)
+        with open(local_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
 
-        size_mb = round(size / 1024 / 1024, 2)
-        log(f"temp file saved: {temp_path}, size={size_mb} MB")
+        file_size = os.path.getsize(local_path) / 1024 / 1024
 
-        ensure_yandex_folder(YANDEX_UPLOAD_FOLDER)
+        print(f"[WEBAPP] temp file saved: {local_path}")
+        print(f"[WEBAPP] size: {file_size:.2f} MB")
 
-        remote_path = f"{YANDEX_UPLOAD_FOLDER}/{safe_user_id}_{normalized_stage}_{timestamp}{suffix}"
+        remote_path = f"{YANDEX_UPLOAD_FOLDER}/{local_filename}"
 
-        upload_to_yandex_disk(temp_path, remote_path)
+        success = upload_to_yandex(local_path, remote_path)
 
-        payload = {
-            "type": "yandex_disk_upload",
-            "stage": normalized_stage,
-            "user_id": safe_user_id,
-            "filename": filename,
-            "remote_path": remote_path,
-            "size_bytes": size,
-        }
+        os.remove(local_path)
 
-        log(f"POST /upload complete: {payload}")
+        if success:
+            print("[WEBAPP] SUCCESS")
 
-        return JSONResponse(payload)
+            return JSONResponse({
+                "success": True,
+                "message": "Файл загружен"
+            })
 
-    except HTTPException:
-        raise
+        return JSONResponse({
+            "success": False,
+            "message": "Ошибка загрузки"
+        })
 
-    except Exception as error:
-        log(f"POST /upload error: {repr(error)}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Upload failed: {error}"
-        )
+    except Exception as e:
+        print("[WEBAPP] ERROR:", str(e))
 
-    finally:
-        try:
-            temp_path.unlink(missing_ok=True)
-            log(f"temp file removed: {temp_path}")
-        except Exception as cleanup_error:
-            log(f"temp cleanup error: {repr(cleanup_error)}")
+        return JSONResponse({
+            "success": False,
+            "message": str(e)
+        })
