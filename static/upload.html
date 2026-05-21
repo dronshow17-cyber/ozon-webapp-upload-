@@ -1,261 +1,203 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="ru">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>MarketCopilot Upload</title>
-  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MarketCopilot Upload</title>
 
-  <style>
-    body {
-      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      margin: 0;
-      padding: 24px;
-      background: #f6f7fb;
-      color: #1f2937;
-    }
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
 
-    .card {
-      background: #ffffff;
-      border-radius: 18px;
-      padding: 22px;
-      box-shadow: 0 10px 30px rgba(0,0,0,.08);
-      max-width: 520px;
-      margin: 0 auto;
-    }
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: #f4f5f7;
+            margin: 0;
+            padding: 20px;
+        }
 
-    h1 {
-      font-size: 22px;
-      margin: 0 0 10px;
-    }
+        .card {
+            max-width: 520px;
+            margin: auto;
+            background: white;
+            padding: 24px;
+            border-radius: 18px;
+            box-shadow: 0 8px 30px rgba(0,0,0,.08);
+        }
 
-    p {
-      color: #6b7280;
-      line-height: 1.45;
-      margin: 8px 0 16px;
-    }
+        h1 {
+            font-size: 28px;
+            margin-bottom: 12px;
+        }
 
-    label {
-      display: block;
-      margin-top: 14px;
-      font-weight: 700;
-      font-size: 14px;
-    }
+        p {
+            color: #666;
+            line-height: 1.5;
+        }
 
-    select, input, button {
-      width: 100%;
-      box-sizing: border-box;
-      margin-top: 8px;
-      padding: 14px;
-      border-radius: 12px;
-      border: 1px solid #d1d5db;
-      font-size: 16px;
-    }
+        label {
+            display: block;
+            margin-top: 18px;
+            margin-bottom: 8px;
+            font-weight: bold;
+        }
 
-    button {
-      margin-top: 18px;
-      background: #2563eb;
-      color: white;
-      font-weight: 700;
-      border: 0;
-      cursor: pointer;
-    }
+        select,
+        input[type=file] {
+            width: 100%;
+            padding: 12px;
+            border-radius: 10px;
+            border: 1px solid #ccc;
+        }
 
-    button:disabled {
-      opacity: .55;
-      cursor: not-allowed;
-    }
+        button {
+            width: 100%;
+            margin-top: 24px;
+            padding: 14px;
+            border: none;
+            border-radius: 12px;
+            background: #2f6bff;
+            color: white;
+            font-size: 18px;
+            cursor: pointer;
+        }
 
-    .status {
-      margin-top: 14px;
-      font-size: 14px;
-      white-space: pre-wrap;
-      color: #374151;
-    }
+        button:hover {
+            opacity: 0.9;
+        }
 
-    .hint {
-      font-size: 13px;
-      color: #6b7280;
-      background: #f3f4f6;
-      padding: 10px 12px;
-      border-radius: 12px;
-      margin-top: 12px;
-    }
+        #status {
+            margin-top: 18px;
+            font-weight: bold;
+        }
 
-    .progress-wrap {
-      width: 100%;
-      background: #e5e7eb;
-      border-radius: 999px;
-      height: 10px;
-      margin-top: 14px;
-      overflow: hidden;
-      display: none;
-    }
-
-    .progress-bar {
-      width: 0%;
-      height: 100%;
-      background: #2563eb;
-      transition: width .2s ease;
-    }
-  </style>
+        progress {
+            width: 100%;
+            height: 20px;
+            margin-top: 12px;
+        }
+    </style>
 </head>
-
 <body>
-  <div class="card">
+
+<div class="card">
+
     <h1>📤 MarketCopilot Upload</h1>
 
     <p>
-      Загрузите большой файл для оптимизации поставок Ozon.
-      Файл уйдёт напрямую на сервер и Яндекс.Диск, без лимита Telegram.
+        Загрузите файл напрямую на сервер и Яндекс.Диск.
     </p>
 
-    <label for="stage">Что загружаем?</label>
-    <select id="stage">
-      <option value="locality">1/3 — Локальность / Переплата</option>
-      <option value="sales">2/3 — Продажи</option>
-      <option value="stocks">3/3 — Остатки</option>
+    <label>Что загружаем?</label>
+
+    <select id="step">
+        <option value="1">1/3 — Локальность / Переплата</option>
+        <option value="2">2/3 — Продажи</option>
+        <option value="3">3/3 — Остатки</option>
     </select>
 
-    <label for="file">Файл</label>
-    <input id="file" type="file" accept=".xlsx,.xls,.csv" />
+    <label>Файл</label>
 
-    <div class="hint">
-      Поддерживаются файлы: .xlsx, .xls, .csv.
-      Максимальный размер зависит от настройки MAX_UPLOAD_MB в Railway.
-    </div>
+    <input type="file" id="file">
 
-    <button id="uploadBtn">Загрузить файл</button>
+    <button onclick="uploadFile()">
+        Загрузить файл
+    </button>
 
-    <div class="progress-wrap" id="progressWrap">
-      <div class="progress-bar" id="progressBar"></div>
-    </div>
+    <progress id="progress" value="0" max="100" style="display:none;"></progress>
 
-    <div id="status" class="status"></div>
-  </div>
+    <div id="status"></div>
+
+</div>
 
 <script>
-  const tg = window.Telegram.WebApp;
-  tg.expand();
 
-  const statusEl = document.getElementById("status");
-  const uploadBtn = document.getElementById("uploadBtn");
-  const progressWrap = document.getElementById("progressWrap");
-  const progressBar = document.getElementById("progressBar");
+const tg = window.Telegram.WebApp;
+tg.expand();
 
-  function getUserId() {
-    return tg.initDataUnsafe && tg.initDataUnsafe.user
-      ? String(tg.initDataUnsafe.user.id)
-      : "unknown";
-  }
+async function uploadFile() {
 
-  function setStatus(text) {
-    statusEl.textContent = text;
-  }
-
-  function setProgress(percent) {
-    progressWrap.style.display = "block";
-    progressBar.style.width = percent + "%";
-  }
-
-  function getUploadUrl() {
-    // В Telegram WebView относительный путь иногда не доходит до backend.
-    // Поэтому используем абсолютный HTTPS URL текущего WebApp-домена.
-    return window.location.origin + "/upload";
-  }
-
-  function uploadWithProgress(url, formData, timeoutMs = 180000) {
-    return new Promise((resolve, reject) => {
-      const xhr = new XMLHttpRequest();
-
-      const timeout = setTimeout(() => {
-        xhr.abort();
-        reject(new Error("Загрузка заняла слишком много времени. Проверь Railway logs и Яндекс.Диск."));
-      }, timeoutMs);
-
-      xhr.open("POST", url, true);
-
-      xhr.upload.onprogress = function(event) {
-        if (event.lengthComputable) {
-          const percent = Math.round((event.loaded / event.total) * 100);
-          setProgress(percent);
-          setStatus("⏳ Загружаю файл... " + percent + "%");
-        } else {
-          setStatus("⏳ Загружаю файл...");
-        }
-      };
-
-      xhr.onload = function() {
-        clearTimeout(timeout);
-
-        let data = {};
-        try {
-          data = JSON.parse(xhr.responseText || "{}");
-        } catch (e) {
-          reject(new Error("Сервер вернул не JSON: " + xhr.responseText));
-          return;
-        }
-
-        if (xhr.status >= 200 && xhr.status < 300) {
-          resolve(data);
-        } else {
-          reject(new Error(data.detail || ("Ошибка сервера: " + xhr.status)));
-        }
-      };
-
-      xhr.onerror = function() {
-        clearTimeout(timeout);
-        reject(new Error("Ошибка сети при загрузке файла. URL: " + url));
-      };
-
-      xhr.onabort = function() {
-        clearTimeout(timeout);
-        reject(new Error("Загрузка была прервана."));
-      };
-
-      xhr.send(formData);
-    });
-  }
-
-  uploadBtn.addEventListener("click", async () => {
     const fileInput = document.getElementById("file");
-    const stage = document.getElementById("stage").value;
-
-    if (!fileInput.files.length) {
-      setStatus("Выберите файл.");
-      return;
-    }
-
     const file = fileInput.files[0];
 
-    const formData = new FormData();
-    formData.append("file", file);
-    formData.append("stage", stage);
-    formData.append("user_id", getUserId());
-
-    uploadBtn.disabled = true;
-    setProgress(0);
-
-    const uploadUrl = getUploadUrl();
-    setStatus("⏳ Начинаю загрузку...\nURL: " + uploadUrl);
-
-    try {
-      const data = await uploadWithProgress(uploadUrl, formData, 180000);
-
-      setProgress(100);
-      setStatus("✅ Файл загружен. Передаю данные боту...");
-
-      tg.sendData(JSON.stringify(data));
-
-      setTimeout(() => {
-        tg.close();
-      }, 800);
-
-    } catch (error) {
-      setStatus("❌ " + error.message);
-      uploadBtn.disabled = false;
+    if (!file) {
+        alert("Выберите файл");
+        return;
     }
-  });
+
+    const step = document.getElementById("step").value;
+
+    const progress = document.getElementById("progress");
+    const status = document.getElementById("status");
+
+    progress.style.display = "block";
+    progress.value = 0;
+
+    status.innerText = "⏳ Загружаем файл...";
+
+    const formData = new FormData();
+
+    formData.append("file", file);
+    formData.append("step", step);
+    formData.append("user_id", tg.initDataUnsafe.user?.id || 0);
+
+    const xhr = new XMLHttpRequest();
+
+    xhr.open(
+        "POST",
+        "/upload",
+        true
+    );
+
+    xhr.upload.onprogress = function(event) {
+
+        if (event.lengthComputable) {
+
+            const percent = Math.round(
+                (event.loaded / event.total) * 100
+            );
+
+            progress.value = percent;
+
+            status.innerText =
+                "⏳ Загрузка: " + percent + "%";
+        }
+    };
+
+    xhr.onload = function() {
+
+        if (xhr.status === 200) {
+
+            status.innerText =
+                "✅ Файл успешно загружен";
+
+            progress.value = 100;
+
+            try {
+
+                const response =
+                    JSON.parse(xhr.responseText);
+
+                tg.sendData(JSON.stringify(response));
+
+            } catch(e) {}
+
+        } else {
+
+            status.innerText =
+                "❌ Ошибка загрузки";
+        }
+    };
+
+    xhr.onerror = function() {
+
+        status.innerText =
+            "❌ Ошибка сети";
+    };
+
+    xhr.send(formData);
+}
+
 </script>
+
 </body>
 </html>
