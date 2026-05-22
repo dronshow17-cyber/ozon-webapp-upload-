@@ -5,6 +5,8 @@
   <title>MarketCopilot Upload</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+
   <style>
     body {
       font-family: Arial, sans-serif;
@@ -75,11 +77,6 @@
       margin-top: 16px;
       font-size: 15px;
     }
-
-    a {
-      color: #2563eb;
-      font-weight: 700;
-    }
   </style>
 </head>
 
@@ -87,7 +84,7 @@
   <div class="card">
     <h1>📤 MarketCopilot Upload</h1>
 
-    <p>Загрузите файлы напрямую в Яндекс.Диск.</p>
+    <p>Загрузите 3 файла. Большие CSV будут сжаты в ZIP и сохранены на Яндекс.Диск.</p>
 
     <label>Что загружаем?</label>
 
@@ -105,7 +102,7 @@
       Загрузить файл
     </button>
 
-    <progress id="progress" value="0" max="100"></progress>
+    <progress id="progress"></progress>
 
     <div id="status"></div>
 
@@ -115,9 +112,39 @@
   </div>
 
   <script>
+    const tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
+
+    if (tg) {
+      tg.ready();
+      tg.expand();
+    }
+
+    function getUserId() {
+      if (tg && tg.initDataUnsafe && tg.initDataUnsafe.user && tg.initDataUnsafe.user.id) {
+        return String(tg.initDataUnsafe.user.id);
+      }
+
+      return "0";
+    }
+
+    function goToNextStage(currentStage) {
+      const stageSelect = document.getElementById("stage");
+
+      if (currentStage === "locality") {
+        stageSelect.value = "sales";
+        return;
+      }
+
+      if (currentStage === "sales") {
+        stageSelect.value = "stocks";
+        return;
+      }
+    }
+
     async function uploadFile() {
       const fileInput = document.getElementById("fileInput");
-      const stage = document.getElementById("stage").value;
+      const stageSelect = document.getElementById("stage");
+      const stage = stageSelect.value;
       const status = document.getElementById("status");
       const uploadBtn = document.getElementById("uploadBtn");
       const progress = document.getElementById("progress");
@@ -128,46 +155,48 @@
         return;
       }
 
+      const userId = getUserId();
+
+      if (userId === "0") {
+        status.innerText = "Ошибка: WebApp открыт не из Telegram, user_id не найден";
+        return;
+      }
+
       const file = fileInput.files[0];
 
-      status.innerText = "Получаем ссылку для загрузки...";
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("stage", stage);
+      formData.append("user_id", userId);
+
+      status.innerText = "Загружаем файл...";
       uploadBtn.disabled = true;
       processBtn.style.display = "none";
       progress.style.display = "block";
       progress.removeAttribute("value");
 
       try {
-        const formData = new FormData();
-        formData.append("filename", file.name);
-        formData.append("stage", stage);
-        formData.append("user_id", "0");
-
-        const urlResponse = await fetch("/get-upload-url", {
+        const response = await fetch("/upload", {
           method: "POST",
           body: formData
         });
 
-        const urlResult = await urlResponse.json();
+        const result = await response.json();
 
-        if (!urlResult.success) {
-          throw new Error(urlResult.error || "Не удалось получить upload URL");
-        }
+        if (result.success) {
+          status.innerHTML = "✅ Файл успешно загружен";
 
-        status.innerText = "Загружаем файл напрямую в Яндекс.Диск...";
+          fileInput.value = "";
 
-        const uploadResponse = await fetch(urlResult.upload_url, {
-          method: "PUT",
-          body: file
-        });
+          if (stage === "stocks") {
+            processBtn.style.display = "block";
+            status.innerHTML = "✅ Остатки загружены. Теперь можно сформировать готовый файл.";
+          } else {
+            goToNextStage(stage);
+          }
 
-        if (!uploadResponse.ok) {
-          throw new Error("Ошибка Яндекс.Диска: " + uploadResponse.status);
-        }
-
-        status.innerHTML = "✅ Файл успешно загружен";
-
-        if (stage === "stocks") {
-          processBtn.style.display = "block";
+        } else {
+          status.innerText = "Ошибка загрузки: " + (result.error || "unknown");
         }
 
       } catch (error) {
@@ -182,26 +211,31 @@
     async function processFiles() {
       const status = document.getElementById("status");
       const processBtn = document.getElementById("processBtn");
+      const userId = getUserId();
 
-      status.innerText = "Формируем готовый файл...";
+      if (userId === "0") {
+        status.innerText = "Ошибка: user_id не найден";
+        return;
+      }
+
+      const formData = new FormData();
+      formData.append("user_id", userId);
+
+      status.innerText = "Формируем готовый файл и отправляем в Telegram...";
       processBtn.disabled = true;
 
       try {
         const response = await fetch("/process", {
-          method: "POST"
+          method: "POST",
+          body: formData
         });
 
         const result = await response.json();
 
         if (result.success) {
-          status.innerHTML =
-            `✅ Готовый файл сформирован<br>
-             <a href="${result.download_url}" target="_blank">
-               Скачать готовый файл
-             </a>`;
+          status.innerHTML = "✅ Готовый файл отправлен в Telegram";
         } else {
-          status.innerText =
-            "Ошибка формирования: " + (result.error || "unknown");
+          status.innerText = "Ошибка формирования: " + (result.error || "unknown");
         }
 
       } catch (error) {
