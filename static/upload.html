@@ -1,180 +1,188 @@
 <!DOCTYPE html>
 <html lang="ru">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta charset="UTF-8" />
+  <title>MarketCopilot Upload</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
-<title>MarketCopilot Upload</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #f3f4f6;
+      margin: 0;
+      padding: 24px;
+    }
 
-<script src="https://telegram.org/js/telegram-web-app.js"></script>
+    .card {
+      max-width: 440px;
+      margin: 0 auto;
+      background: white;
+      border-radius: 18px;
+      padding: 24px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.08);
+    }
 
-<style>
-body{
-    font-family: Arial,sans-serif;
-    background:#f3f5f7;
-    margin:0;
-    padding:20px;
-}
+    h1 {
+      font-size: 24px;
+      margin-bottom: 16px;
+    }
 
-.card{
-    max-width:520px;
-    margin:auto;
-    background:white;
-    border-radius:20px;
-    padding:24px;
-    box-shadow:0 10px 30px rgba(0,0,0,.1);
-}
+    label {
+      display: block;
+      margin-top: 16px;
+      margin-bottom: 8px;
+      font-weight: 600;
+    }
 
-h1{
-    margin-top:0;
-    font-size:24px;
-}
+    select, input {
+      width: 100%;
+      padding: 12px;
+      border-radius: 12px;
+      border: 1px solid #d1d5db;
+      box-sizing: border-box;
+    }
 
-p{
-    color:#555;
-}
+    button {
+      width: 100%;
+      margin-top: 20px;
+      padding: 14px;
+      border: none;
+      border-radius: 14px;
+      background: #3867f4;
+      color: white;
+      font-size: 16px;
+      font-weight: 700;
+      cursor: pointer;
+    }
 
-select,
-input[type=file]{
-    width:100%;
-    margin-top:10px;
-    margin-bottom:20px;
-    padding:14px;
-    border-radius:12px;
-    border:1px solid #ccc;
-    box-sizing:border-box;
-}
+    button:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
 
-button{
-    width:100%;
-    padding:16px;
-    border:none;
-    border-radius:14px;
-    background:#356af0;
-    color:white;
-    font-size:18px;
-    cursor:pointer;
-}
+    #processBtn {
+      background: #16a34a;
+      display: none;
+    }
 
-button:hover{
-    opacity:.9;
-}
+    progress {
+      width: 100%;
+      margin-top: 18px;
+      display: none;
+    }
 
-#status{
-    margin-top:20px;
-    font-size:16px;
-}
+    #status {
+      margin-top: 16px;
+      font-size: 15px;
+    }
 
-progress{
-    width:100%;
-    height:18px;
-    margin-top:20px;
-}
-</style>
+    a {
+      color: #2563eb;
+      font-weight: 700;
+    }
+  </style>
 </head>
 
 <body>
+  <div class="card">
+    <h1>📤 MarketCopilot Upload</h1>
 
-<div class="card">
+    <p>Загрузите файлы напрямую на сервер и Яндекс.Диск.</p>
 
-<h1>📤 MarketCopilot Upload</h1>
+    <label>Что загружаем?</label>
+    <select id="stage">
+      <option value="sales">2/3 — Продажи</option>
+      <option value="stocks">3/3 — Остатки</option>
+    </select>
 
-<p>
-Загрузите файл напрямую на сервер и Яндекс.Диск.
-</p>
+    <label>Файл</label>
+    <input id="fileInput" type="file" />
 
-<label>Что загружаем?</label>
+    <button id="uploadBtn" onclick="uploadFile()">Загрузить файл</button>
 
-<select id="stage">
-    <option value="locality">1/3 — Локальность / Переплата</option>
-    <option value="sales">2/3 — Продажи</option>
-    <option value="stocks">3/3 — Остатки</option>
-</select>
+    <progress id="progress" value="0" max="100"></progress>
 
-<label>Файл</label>
+    <div id="status"></div>
 
-<input type="file" id="fileInput">
+    <button id="processBtn" onclick="processFiles()">Сформировать готовый файл</button>
+  </div>
 
-<button onclick="uploadFile()">
-    Загрузить файл
-</button>
+  <script>
+    async function uploadFile() {
+      const fileInput = document.getElementById("fileInput");
+      const stage = document.getElementById("stage").value;
+      const status = document.getElementById("status");
+      const uploadBtn = document.getElementById("uploadBtn");
+      const progress = document.getElementById("progress");
+      const processBtn = document.getElementById("processBtn");
 
-<progress id="progressBar" value="0" max="100" style="display:none;"></progress>
-
-<div id="status"></div>
-
-</div>
-
-<script>
-
-async function uploadFile(){
-
-    const fileInput = document.getElementById("fileInput");
-    const stage = document.getElementById("stage").value;
-    const status = document.getElementById("status");
-    const progressBar = document.getElementById("progressBar");
-
-    if(fileInput.files.length === 0){
-        alert("Выберите файл");
+      if (!fileInput.files.length) {
+        status.innerText = "Выберите файл";
         return;
-    }
+      }
 
-    const file = fileInput.files[0];
+      const file = fileInput.files[0];
 
-    const formData = new FormData();
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("stage", stage);
+      formData.append("user_id", "0");
 
-    formData.append("file", file);
-    formData.append("stage", stage);
+      status.innerText = "Загрузка файла...";
+      uploadBtn.disabled = true;
+      progress.style.display = "block";
+      progress.removeAttribute("value");
+      processBtn.style.display = "none";
 
-    status.innerHTML = "⏳ Загружаем...";
-    progressBar.style.display = "block";
-
-    try{
-
-        const xhr = new XMLHttpRequest();
-
-        xhr.upload.addEventListener("progress", function(e){
-
-            if(e.lengthComputable){
-
-                const percent = (e.loaded / e.total) * 100;
-
-                progressBar.value = percent;
-            }
+      try {
+        const response = await fetch("/upload", {
+          method: "POST",
+          body: formData
         });
 
-        xhr.onreadystatechange = function(){
+        const result = await response.json();
 
-            if(xhr.readyState === 4){
-
-                if(xhr.status === 200){
-
-                    status.innerHTML = "✅ Файл успешно загружен";
-
-                    progressBar.value = 100;
-
-                }else{
-
-                    status.innerHTML = "❌ Ошибка загрузки";
-
-                    console.log(xhr.responseText);
-                }
-            }
-        };
-
-        xhr.open("POST", "/upload");
-
-        xhr.send(formData);
-
-    }catch(err){
-
-        console.log(err);
-
-        status.innerHTML = "❌ Ошибка";
+        if (result.success) {
+          status.innerHTML = "✅ Файл успешно загружен";
+          processBtn.style.display = "block";
+        } else {
+          status.innerText = "Ошибка загрузки: " + (result.error || "unknown");
+        }
+      } catch (error) {
+        status.innerText = "Ошибка запроса: " + error.message;
+      } finally {
+        uploadBtn.disabled = false;
+        progress.style.display = "none";
+      }
     }
-}
 
-</script>
+    async function processFiles() {
+      const status = document.getElementById("status");
+      const processBtn = document.getElementById("processBtn");
 
+      status.innerText = "Формируем готовый файл...";
+      processBtn.disabled = true;
+
+      try {
+        const response = await fetch("/process", {
+          method: "POST"
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+          status.innerHTML =
+            `✅ Готовый файл сформирован<br>
+             <a href="${result.download_url}" target="_blank">Скачать готовый файл</a>`;
+        } else {
+          status.innerText = "Ошибка формирования: " + (result.error || "unknown");
+        }
+      } catch (error) {
+        status.innerText = "Ошибка запроса: " + error.message;
+      } finally {
+        processBtn.disabled = false;
+      }
+    }
+  </script>
 </body>
 </html>
