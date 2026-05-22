@@ -27,7 +27,7 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 @app.get("/")
 async def index():
-    return FileResponse("upload.html")
+    return FileResponse("static/upload.html")
 
 
 def yadisk_headers():
