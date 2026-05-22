@@ -20,7 +20,7 @@
 <body>
   <div class="card">
     <h1>📤 MarketCopilot Upload</h1>
-    <p>Загрузите большой файл. После загрузки Mini App вернёт данные в бота, и бот продолжит текущий шаг.</p>
+    <p>Если файл объёмный, загрузка может занять до 5 минут. После загрузки бот продолжит текущий шаг.</p>
 
     <label>Что загружаем?</label>
     <select id="stage">
@@ -103,7 +103,7 @@
       formData.append("stage", stage);
       formData.append("user_id", userId);
 
-      status.innerText = "Загружаем файл...";
+      status.innerText = "Загружаем файл... Если файл объёмный, это может занять до 5 минут.";
       uploadBtn.disabled = true;
       progress.style.display = "block";
       progress.removeAttribute("value");
