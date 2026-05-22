@@ -148,9 +148,13 @@
 
         const result = await response.json();
 
-        if (result.success) {
-          status.innerHTML = "✅ Файл успешно загружен";
-          processBtn.style.display = "block";
+       if (result.success) {
+    status.innerHTML = "✅ Файл успешно загружен";
+
+    // Показываем кнопку только на этапе 3/3
+    if (stageSelect.value === "stocks") {
+        processBtn.style.display = "block";
+    }
         } else {
           status.innerText =
             "Ошибка загрузки: " + (result.error || "unknown");
