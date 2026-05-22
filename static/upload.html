@@ -120,12 +120,36 @@
     }
 
     function getUserId() {
-      if (tg && tg.initDataUnsafe && tg.initDataUnsafe.user && tg.initDataUnsafe.user.id) {
-        return String(tg.initDataUnsafe.user.id);
-      }
+  try {
+    const tgApp = window.Telegram && window.Telegram.WebApp
+      ? window.Telegram.WebApp
+      : null;
 
-      return "0";
+    if (tgApp) {
+      tgApp.ready();
+
+      if (
+        tgApp.initDataUnsafe &&
+        tgApp.initDataUnsafe.user &&
+        tgApp.initDataUnsafe.user.id
+      ) {
+        return String(tgApp.initDataUnsafe.user.id);
+      }
     }
+
+    const urlParams = new URLSearchParams(window.location.search);
+    const urlUserId = urlParams.get("user_id");
+
+    if (urlUserId) {
+      return String(urlUserId);
+    }
+
+    return "0";
+
+  } catch (e) {
+    return "0";
+  }
+}
 
     function goToNextStage(currentStage) {
       const stageSelect = document.getElementById("stage");
