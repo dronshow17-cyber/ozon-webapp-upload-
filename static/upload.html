@@ -87,11 +87,12 @@
   <div class="card">
     <h1>📤 MarketCopilot Upload</h1>
 
-    <p>Загрузите файлы напрямую на сервер и Яндекс.Диск.</p>
+    <p>Загрузите файлы напрямую в Яндекс.Диск.</p>
 
     <label>Что загружаем?</label>
 
     <select id="stage">
+      <option value="locality">1/3 — Локализация</option>
       <option value="sales">2/3 — Продажи</option>
       <option value="stocks">3/3 — Остатки</option>
     </select>
@@ -129,35 +130,44 @@
 
       const file = fileInput.files[0];
 
-      const formData = new FormData();
-      formData.append("file", file);
-      formData.append("stage", stage);
-      formData.append("user_id", "0");
-
-      status.innerText = "Загрузка файла...";
+      status.innerText = "Получаем ссылку для загрузки...";
       uploadBtn.disabled = true;
+      processBtn.style.display = "none";
       progress.style.display = "block";
       progress.removeAttribute("value");
-      processBtn.style.display = "none";
 
       try {
-        const response = await fetch("/upload", {
+        const formData = new FormData();
+        formData.append("filename", file.name);
+        formData.append("stage", stage);
+        formData.append("user_id", "0");
+
+        const urlResponse = await fetch("/get-upload-url", {
           method: "POST",
           body: formData
         });
 
-        const result = await response.json();
+        const urlResult = await urlResponse.json();
 
-       if (result.success) {
-    status.innerHTML = "✅ Файл успешно загружен";
+        if (!urlResult.success) {
+          throw new Error(urlResult.error || "Не удалось получить upload URL");
+        }
 
-    // Показываем кнопку только на этапе 3/3
-    if (stageSelect.value === "stocks") {
-        processBtn.style.display = "block";
-    }
-        } else {
-          status.innerText =
-            "Ошибка загрузки: " + (result.error || "unknown");
+        status.innerText = "Загружаем файл напрямую в Яндекс.Диск...";
+
+        const uploadResponse = await fetch(urlResult.upload_url, {
+          method: "PUT",
+          body: file
+        });
+
+        if (!uploadResponse.ok) {
+          throw new Error("Ошибка Яндекс.Диска: " + uploadResponse.status);
+        }
+
+        status.innerHTML = "✅ Файл успешно загружен";
+
+        if (stage === "stocks") {
+          processBtn.style.display = "block";
         }
 
       } catch (error) {
