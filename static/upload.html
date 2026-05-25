@@ -4,36 +4,41 @@
   <meta charset="UTF-8" />
   <title>MarketCopilot Upload</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, max-age=0" />
+  <meta http-equiv="Pragma" content="no-cache" />
+  <meta http-equiv="Expires" content="0" />
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
+
   <style>
     body { font-family: Arial, sans-serif; background: #f3f4f6; margin: 0; padding: 24px; }
     .card { max-width: 440px; margin: 0 auto; background: white; border-radius: 18px; padding: 24px; box-shadow: 0 10px 30px rgba(0,0,0,0.08); }
     h1 { font-size: 24px; margin-bottom: 16px; }
+    p { line-height: 1.35; }
     label { display: block; margin-top: 16px; margin-bottom: 8px; font-weight: 600; }
-    select, input { width: 100%; padding: 12px; border-radius: 12px; border: 1px solid #d1d5db; box-sizing: border-box; }
+    select, input { width: 100%; padding: 12px; border-radius: 12px; border: 1px solid #d1d5db; box-sizing: border-box; background: white; }
     button { width: 100%; margin-top: 20px; padding: 14px; border: none; border-radius: 14px; background: #3867f4; color: white; font-size: 16px; font-weight: 700; cursor: pointer; }
     button:disabled { opacity: 0.6; cursor: not-allowed; }
     progress { width: 100%; margin-top: 18px; display: none; }
     #status { margin-top: 16px; font-size: 15px; }
+    .hint { color: #4b5563; font-size: 14px; }
   </style>
 </head>
+
 <body>
   <div class="card">
-    <h1>📤 MarketCopilot Upload</h1>
-    <p>Если файл объёмный, загрузка может занять до 5 минут. После загрузки бот продолжит текущий шаг.</p>
+    <h1 id="title">📤 MarketCopilot Upload</h1>
+    <p id="description">Если файл объёмный, загрузка может занять до 5 минут. После загрузки бот продолжит текущий шаг.</p>
 
     <label>Что загружаем?</label>
-    <select id="stage">
-      <option value="locality">1/3 — Локализация</option>
-      <option value="sales">2/3 — Продажи</option>
-      <option value="stocks">3/3 — Остатки</option>
-    </select>
+    <select id="stage"></select>
+
+    <p id="hint" class="hint"></p>
 
     <label>Файл</label>
-    <input id="fileInput" type="file" />
+    <input id="fileInput" type="file" accept=".xlsx,.xls,.csv,.zip" />
 
     <button id="uploadBtn" onclick="uploadFile()">Загрузить файл</button>
-    <progress id="progress"></progress>
+    <progress id="progress" value="0" max="100"></progress>
     <div id="status"></div>
   </div>
 
@@ -45,18 +50,71 @@
       tg.expand();
     }
 
+    const STAGES = {
+      ozon: [
+        { value: "locality", label: "1/3 — Локальность" },
+        { value: "sales", label: "2/3 — Продажи" },
+        { value: "stocks", label: "3/3 — Остатки" }
+      ],
+      wb: [
+        { value: "wb_sales", label: "1/2 — Продажи WB" },
+        { value: "wb_stocks", label: "2/2 — Остатки WB" }
+      ]
+    };
+
     function getUrlParam(name) {
       const params = new URLSearchParams(window.location.search);
       return params.get(name);
     }
 
+    function getMarketplace() {
+      const marketplace = String(getUrlParam("marketplace") || "").toLowerCase();
+      const stage = String(getUrlParam("stage") || "").toLowerCase();
+      const forceWb = getUrlParam("force_wb");
+      const forceOzon = getUrlParam("force_ozon");
+
+      if (
+        forceWb === "1" ||
+        marketplace === "wb" ||
+        marketplace === "wildberries" ||
+        stage === "wb_sales" ||
+        stage === "wb_stocks"
+      ) {
+        return "wb";
+      }
+
+      if (
+        forceOzon === "1" ||
+        marketplace === "ozon" ||
+        stage === "locality" ||
+        stage === "sales" ||
+        stage === "stocks"
+      ) {
+        return "ozon";
+      }
+
+      return null;
+    }
+
+    function getSessionId() {
+      const sessionId = getUrlParam("session_id");
+      return sessionId ? String(sessionId) : "";
+    }
+
     function getUserId() {
       try {
+        const urlUserId = getUrlParam("user_id");
+
         if (tg && tg.initDataUnsafe && tg.initDataUnsafe.user && tg.initDataUnsafe.user.id) {
-          return String(tg.initDataUnsafe.user.id);
+          const telegramUserId = String(tg.initDataUnsafe.user.id);
+
+          if (urlUserId && String(urlUserId) !== telegramUserId) {
+            return "MISMATCH";
+          }
+
+          return telegramUserId;
         }
 
-        const urlUserId = getUrlParam("user_id");
         if (urlUserId) {
           return String(urlUserId);
         }
@@ -67,49 +125,131 @@
       }
     }
 
-    function applyStageFromUrl() {
+    function renderStageOptions() {
+      const marketplace = getMarketplace();
       const stageFromUrl = getUrlParam("stage");
       const stageSelect = document.getElementById("stage");
+      const title = document.getElementById("title");
+      const hint = document.getElementById("hint");
 
-      if (["locality", "sales", "stocks"].includes(stageFromUrl)) {
+      if (!marketplace || !STAGES[marketplace]) {
+        document.body.innerHTML = `
+          <div class="card">
+            <h1>Ошибка открытия</h1>
+            <p>Маркетплейс не определён. Откройте загрузку заново из нужного сценария в боте.</p>
+          </div>
+        `;
+        return;
+      }
+
+      stageSelect.innerHTML = "";
+      const options = STAGES[marketplace];
+
+      options.forEach(function (item) {
+        const option = document.createElement("option");
+        option.value = item.value;
+        option.textContent = item.label;
+        stageSelect.appendChild(option);
+      });
+
+      const allowedValues = options.map(function (item) { return item.value; });
+
+      if (stageFromUrl && allowedValues.includes(stageFromUrl)) {
         stageSelect.value = stageFromUrl;
+      } else {
+        stageSelect.value = options[0].value;
+      }
+
+      if (marketplace === "wb") {
+        title.innerText = "📤 Загрузка Wildberries";
+        hint.innerText = "В этом режиме доступны только файлы для оптимизации поставок Wildberries.";
+      } else {
+        title.innerText = "📤 Загрузка Ozon";
+        hint.innerText = "В этом режиме доступны только файлы для оптимизации поставок Ozon.";
       }
     }
 
-    applyStageFromUrl();
+    renderStageOptions();
 
     async function uploadFile() {
       const fileInput = document.getElementById("fileInput");
-      const stageSelect = document.getElementById("stage");
-      const stage = stageSelect.value;
+      const stage = document.getElementById("stage").value;
+      const marketplace = getMarketplace();
       const status = document.getElementById("status");
       const uploadBtn = document.getElementById("uploadBtn");
       const progress = document.getElementById("progress");
+
+      if (!marketplace || !STAGES[marketplace]) {
+        status.innerText = "Ошибка: маркетплейс не определён. Откройте загрузку заново из бота.";
+        return;
+      }
 
       if (!fileInput.files.length) {
         status.innerText = "Выберите файл";
         return;
       }
 
+      const allowedForMarketplace = STAGES[marketplace].map(function (item) { return item.value; });
+
+      if (!allowedForMarketplace.includes(stage)) {
+        status.innerText = "Ошибка: выбранный тип файла не относится к текущему маркетплейсу.";
+        return;
+      }
+
       const userId = getUserId();
+      const sessionId = getSessionId();
+
       if (userId === "0") {
         status.innerText = "Ошибка: WebApp открыт не из Telegram, user_id не найден";
         return;
       }
 
+      if (userId === "MISMATCH") {
+        status.innerText = "Ошибка безопасности: данные пользователя не совпадают. Откройте загрузку заново из бота.";
+        return;
+      }
+
+      if (!sessionId) {
+        status.innerText = "Ошибка: сессия загрузки не найдена. Откройте загрузку заново из бота.";
+        return;
+      }
+
       const file = fileInput.files[0];
+      const maxFileSizeBytes = 150 * 1024 * 1024;
+      const allowedExtensions = [".xlsx", ".xls", ".csv", ".zip"];
+      const fileNameLower = file.name.toLowerCase();
+      const hasAllowedExtension = allowedExtensions.some(function (ext) {
+        return fileNameLower.endsWith(ext);
+      });
+
+      if (!hasAllowedExtension) {
+        status.innerText = "Недопустимый формат файла. Разрешены: xlsx, xls, csv, zip.";
+        return;
+      }
+
+      if (file.size > maxFileSizeBytes) {
+        status.innerText = "Файл слишком большой. Максимум: 150 МБ.";
+        return;
+      }
+
       const formData = new FormData();
       formData.append("file", file);
       formData.append("stage", stage);
+      formData.append("marketplace", marketplace);
       formData.append("user_id", userId);
+      formData.append("session_id", sessionId);
 
-      status.innerText = "Загружаем файл... Если файл объёмный, это может занять до 5 минут.";
+      status.innerText = "Загрузка файла...";
       uploadBtn.disabled = true;
       progress.style.display = "block";
       progress.removeAttribute("value");
 
       try {
-        const response = await fetch("/upload", { method: "POST", body: formData });
+        const response = await fetch("/upload", {
+          method: "POST",
+          body: formData
+        });
+
         const result = await response.json();
 
         if (!result.success) {
@@ -117,13 +257,16 @@
           return;
         }
 
-        status.innerHTML = "✅ Файл загружен. Передаю данные боту...";
+        status.innerHTML = "✅ Файл успешно загружен. Передаю данные боту...";
 
         const payload = {
           type: "yandex_disk_upload",
-          stage: stage,
+          marketplace: result.marketplace || marketplace,
+          stage: result.stage || stage,
+          user_id: userId,
+          session_id: result.session_id || sessionId,
           remote_path: result.remote_path,
-          filename: file.name
+          filename: result.filename || file.name
         };
 
         if (tg && tg.sendData) {
