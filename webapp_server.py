@@ -1,5 +1,6 @@
 import os
 import time
+import uuid
 import shutil
 import zipfile
 import requests
@@ -12,19 +13,30 @@ from openpyxl import Workbook
 
 app = FastAPI()
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-YANDEX_TOKEN = os.getenv("YANDEX_TOKEN")
+WEBAPP_URL = os.getenv("WEBAPP_URL", "").rstrip("/")
+YANDEX_TOKEN = os.getenv("YANDEX_TOKEN") or os.getenv("YANDEX_DISK_TOKEN")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 UPLOAD_DIR = "/tmp/marketcopilot_uploads"
 YANDEX_FOLDER = os.getenv("YANDEX_UPLOAD_FOLDER", "MarketCopilotUploads")
+
+ALLOWED_MARKETPLACES = {"ozon", "wb"}
+ALLOWED_STAGES = {"locality", "sales", "stocks", "wb_sales", "wb_stocks"}
+ALLOWED_EXTENSIONS = {".xlsx", ".xls", ".csv", ".zip"}
+MAX_FILE_SIZE_MB = 150
+MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
+
+allowed_origins = ["*"]
+if WEBAPP_URL.startswith("https://"):
+    allowed_origins = [WEBAPP_URL]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=allowed_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
@@ -33,25 +45,134 @@ UPLOAD_REGISTRY = {}
 
 @app.get("/")
 async def index():
-    return FileResponse("static/upload.html")
+    return FileResponse(
+        "static/upload.html",
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        },
+    )
 
 
 def yadisk_headers():
+    if not YANDEX_TOKEN:
+        raise Exception("YANDEX_TOKEN / YANDEX_DISK_TOKEN is missing in Railway Variables")
     return {"Authorization": f"OAuth {YANDEX_TOKEN}"}
 
 
-def create_yadisk_folder():
+def safe_user_id(value: str) -> str:
+    value = str(value or "").strip()
+    if not value.isdigit() or value == "0":
+        raise Exception("Некорректный пользователь. Откройте загрузку заново из бота.")
+    return value
+
+
+def safe_marketplace(value: str) -> str:
+    value = str(value or "").strip().lower()
+    if value not in ALLOWED_MARKETPLACES:
+        raise Exception("Некорректный маркетплейс. Откройте загрузку заново из бота.")
+    return value
+
+
+def marketplace_for_stage(stage: str) -> str:
+    return "wb" if stage in {"wb_sales", "wb_stocks"} else "ozon"
+
+
+def safe_stage(value: str, marketplace: str) -> str:
+    value = str(value or "").strip()
+    marketplace = safe_marketplace(marketplace)
+
+    if value not in ALLOWED_STAGES:
+        raise Exception("Некорректный тип файла.")
+
+    if marketplace == "wb" and value not in {"wb_sales", "wb_stocks"}:
+        raise Exception("Этот файл не относится к сценарию Wildberries.")
+
+    if marketplace == "ozon" and value not in {"locality", "sales", "stocks"}:
+        raise Exception("Этот файл не относится к сценарию Ozon.")
+
+    return value
+
+
+def safe_session_id(value: str) -> str:
+    value = str(value or "").strip()
+    value = "".join(ch for ch in value if ch.isalnum() or ch in ["_", "-"])[:64]
+    if not value:
+        value = uuid.uuid4().hex[:16]
+    return value
+
+
+def safe_filename(filename: str) -> str:
+    filename = os.path.basename(str(filename or "file"))
+    filename = filename.replace("/", "_").replace("\\", "_")
+    filename = filename.replace("..", "_").strip()
+
+    if not filename:
+        filename = "file"
+
+    ext = os.path.splitext(filename)[1].lower()
+    if ext not in ALLOWED_EXTENSIONS:
+        raise Exception("Недопустимый формат файла. Разрешены: xlsx, xls, csv, zip.")
+
+    return filename
+
+
+def validate_zip_contents(path: str):
+    try:
+        with zipfile.ZipFile(path, "r") as archive:
+            infos = [info for info in archive.infolist() if not info.is_dir()]
+
+            if not infos:
+                raise Exception("ZIP архив пустой.")
+
+            if len(infos) > 10:
+                raise Exception("В ZIP архиве слишком много файлов. Максимум: 10.")
+
+            total_uncompressed_size = 0
+
+            for info in infos:
+                name = str(info.filename or "")
+                normalized_name = name.replace("\\", "/")
+                base_name = os.path.basename(normalized_name)
+
+                if not base_name:
+                    raise Exception("В ZIP архиве найден файл с некорректным именем.")
+
+                if normalized_name.startswith("/") or "../" in normalized_name or normalized_name.startswith("../"):
+                    raise Exception("В ZIP архиве найден небезопасный путь к файлу.")
+
+                ext = os.path.splitext(base_name)[1].lower()
+                if ext not in {".csv", ".xlsx", ".xls"}:
+                    raise Exception("В ZIP архиве разрешены только файлы csv, xlsx или xls.")
+
+                total_uncompressed_size += int(info.file_size or 0)
+
+                if total_uncompressed_size > MAX_FILE_SIZE_BYTES:
+                    raise Exception(f"ZIP архив слишком большой после распаковки. Максимум: {MAX_FILE_SIZE_MB} МБ.")
+
+    except zipfile.BadZipFile:
+        raise Exception("Файл ZIP повреждён или имеет неверный формат.")
+
+
+def create_yadisk_folder(path: str):
     response = requests.put(
         "https://cloud-api.yandex.net/v1/disk/resources",
         headers=yadisk_headers(),
-        params={"path": YANDEX_FOLDER},
+        params={"path": path},
         timeout=30,
     )
 
-    print(f"[WEBAPP] create folder response: {response.status_code}", flush=True)
+    print(f"[WEBAPP] create folder {path}: {response.status_code}", flush=True)
 
     if response.status_code not in (201, 409):
-        raise Exception(f"Create folder failed: {response.status_code} {response.text}")
+        raise Exception(f"Create folder failed: {response.status_code} {response.text[:500]}")
+
+
+def ensure_yadisk_path(user_id: str, session_id: str):
+    create_yadisk_folder(YANDEX_FOLDER)
+    create_yadisk_folder(f"{YANDEX_FOLDER}/{user_id}")
+    create_yadisk_folder(f"{YANDEX_FOLDER}/{user_id}/{session_id}")
 
 
 def get_yadisk_upload_url(remote_path: str):
@@ -68,42 +189,17 @@ def get_yadisk_upload_url(remote_path: str):
     return response.json()["href"]
 
 
-def zip_if_csv(local_path: str):
-    if not local_path.lower().endswith(".csv"):
-        return local_path
-
-    zip_path = local_path + ".zip"
-
-    with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as z:
-        z.write(local_path, arcname=os.path.basename(local_path))
-
-    print(
-        f"[WEBAPP] csv zipped: {os.path.getsize(local_path)} -> {os.path.getsize(zip_path)} bytes",
-        flush=True,
-    )
-
-    return zip_path
-
-
 def upload_file_to_yadisk(local_path: str, remote_path: str):
     upload_url = get_yadisk_upload_url(remote_path)
 
-    with open(local_path, "rb") as f:
-        file_bytes = f.read()
-
     print(f"[WEBAPP] start PUT to yadisk: {remote_path}", flush=True)
 
-    response = requests.put(
-        upload_url,
-        files={
-            "file": (
-                os.path.basename(local_path),
-                file_bytes,
-                "application/octet-stream",
-            )
-        },
-        timeout=(30, 600),
-    )
+    with open(local_path, "rb") as file:
+        response = requests.put(
+            upload_url,
+            data=file,
+            timeout=(30, 600),
+        )
 
     print(f"[WEBAPP] upload finished: {response.status_code}", flush=True)
 
@@ -117,42 +213,69 @@ def upload_file_to_yadisk(local_path: str, remote_path: str):
 async def upload(
     file: UploadFile = File(...),
     stage: str = Form(...),
-    user_id: str = Form(...),
+    user_id: str = Form("0"),
+    session_id: str = Form(""),
+    marketplace: str = Form(""),
 ):
     temp_path = None
-    upload_path = None
 
     try:
-        create_yadisk_folder()
+        user_id = safe_user_id(user_id)
+        session_id = safe_session_id(session_id)
 
-        safe_filename = file.filename.replace("/", "_").replace("\\", "_")
-        timestamp = int(time.time())
-        saved_name = f"{user_id}_{stage}_{timestamp}_{safe_filename}"
+        if not marketplace:
+            marketplace = marketplace_for_stage(stage)
 
-        temp_path = os.path.join(UPLOAD_DIR, saved_name)
+        marketplace = safe_marketplace(marketplace)
+        stage = safe_stage(stage, marketplace)
+        filename = safe_filename(file.filename)
 
+        user_temp_dir = os.path.join(UPLOAD_DIR, user_id, session_id)
+        os.makedirs(user_temp_dir, exist_ok=True)
+
+        saved_name = f"{stage}_{int(time.time())}_{filename}"
+        temp_path = os.path.join(user_temp_dir, saved_name)
+
+        size = 0
         with open(temp_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
+            while True:
+                chunk = await file.read(1024 * 1024)
+                if not chunk:
+                    break
 
-        upload_path = zip_if_csv(temp_path)
+                size += len(chunk)
+                if size > MAX_FILE_SIZE_BYTES:
+                    raise Exception(f"Файл слишком большой. Максимум: {MAX_FILE_SIZE_MB} МБ.")
 
-        remote_filename = os.path.basename(upload_path)
-        remote_path = f"{YANDEX_FOLDER}/{remote_filename}"
+                buffer.write(chunk)
 
-        upload_file_to_yadisk(upload_path, remote_path)
+        if filename.lower().endswith(".zip"):
+            validate_zip_contents(temp_path)
+
+        ensure_yadisk_path(user_id, session_id)
+
+        remote_path = f"{YANDEX_FOLDER}/{user_id}/{session_id}/{saved_name}"
+        upload_file_to_yadisk(temp_path, remote_path)
 
         UPLOAD_REGISTRY.setdefault(user_id, {})
         UPLOAD_REGISTRY[user_id][stage] = {
-            "filename": file.filename,
+            "marketplace": marketplace,
+            "filename": filename,
             "remote_path": remote_path,
-            "uploaded_at": timestamp,
+            "uploaded_at": int(time.time()),
+            "session_id": session_id,
         }
 
         return {
             "success": True,
+            "type": "yandex_disk_upload",
+            "marketplace": marketplace,
             "stage": stage,
             "user_id": user_id,
+            "session_id": session_id,
+            "filename": filename,
             "remote_path": remote_path,
+            "size_bytes": size,
             "uploaded_stages": list(UPLOAD_REGISTRY[user_id].keys()),
         }
 
@@ -165,9 +288,8 @@ async def upload(
         )
 
     finally:
-        for path in [temp_path, upload_path]:
-            if path and os.path.exists(path):
-                os.remove(path)
+        if temp_path and os.path.exists(temp_path):
+            os.remove(temp_path)
 
 
 def create_result_xlsx(user_id: str):
@@ -181,7 +303,7 @@ def create_result_xlsx(user_id: str):
     ws.append(["Статус", "Готовый файл сформирован"])
     ws.append(["User ID", user_id])
     ws.append([])
-    ws.append(["Следующий этап", "сюда подключим реальную обработку продаж/остатков/локализации"])
+    ws.append(["Следующий этап", "готовый отчёт формирует Telegram-бот после получения файлов"])
 
     wb.save(result_path)
     return result_path
@@ -217,32 +339,19 @@ def send_document_to_telegram(chat_id: str, file_path: str):
 
 
 @app.post("/process")
-async def process_files(user_id: str = Form(...)):
-    result_path = None
-
+async def process_files(
+    user_id: str = Form("0"),
+    session_id: str = Form(""),
+):
     try:
-        user_files = UPLOAD_REGISTRY.get(user_id, {})
-
-        required = ["locality", "sales", "stocks"]
-        missing = [stage for stage in required if stage not in user_files]
-
-        if missing:
-            return JSONResponse(
-                status_code=400,
-                content={
-                    "success": False,
-                    "error": "Не все файлы загружены",
-                    "missing": missing,
-                },
-            )
-
-        result_path = create_result_xlsx(user_id)
-
-        send_document_to_telegram(user_id, result_path)
+        user_id = safe_user_id(user_id)
+        session_id = safe_session_id(session_id)
 
         return {
             "success": True,
-            "message": "Готовый файл отправлен в Telegram",
+            "message": "Файлы приняты. Готовый отчёт будет сформирован ботом.",
+            "user_id": user_id,
+            "session_id": session_id,
         }
 
     except Exception as e:
@@ -252,7 +361,3 @@ async def process_files(user_id: str = Form(...)):
             status_code=500,
             content={"success": False, "error": str(e)},
         )
-
-    finally:
-        if result_path and os.path.exists(result_path):
-            os.remove(result_path)
