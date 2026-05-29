@@ -57,8 +57,9 @@
         { value: "stocks", label: "3/3 — Остатки" }
       ],
       wb: [
-        { value: "wb_sales", label: "1/2 — Продажи WB" },
-        { value: "wb_stocks", label: "2/2 — Остатки WB" }
+        { value: "wb_sales", label: "1/3 — География заказов WB" },
+        { value: "wb_stocks", label: "2/3 — Остатки WB" },
+        { value: "wb_buyout", label: "3/3 — Продажи WB для % выкупа" }
       ]
     };
 
@@ -78,7 +79,8 @@
         marketplace === "wb" ||
         marketplace === "wildberries" ||
         stage === "wb_sales" ||
-        stage === "wb_stocks"
+        stage === "wb_stocks" || stage === "wb_buyout" ||
+        stage === "wb_buyout"
       ) {
         return "wb";
       }
@@ -132,6 +134,8 @@
       const title = document.getElementById("title");
       const hint = document.getElementById("hint");
 
+      stageSelect.innerHTML = "";
+
       if (!marketplace || !STAGES[marketplace]) {
         document.body.innerHTML = `
           <div class="card">
@@ -142,7 +146,6 @@
         return;
       }
 
-      stageSelect.innerHTML = "";
       const options = STAGES[marketplace];
 
       options.forEach(function (item) {
@@ -154,7 +157,7 @@
 
       const allowedValues = options.map(function (item) { return item.value; });
 
-      if (stageFromUrl && allowedValues.includes(stageFromUrl)) {
+      if (allowedValues.includes(stageFromUrl)) {
         stageSelect.value = stageFromUrl;
       } else {
         stageSelect.value = options[0].value;
@@ -162,7 +165,7 @@
 
       if (marketplace === "wb") {
         title.innerText = "📤 Загрузка Wildberries";
-        hint.innerText = "В этом режиме доступны только файлы для оптимизации поставок Wildberries.";
+        hint.innerText = "1/3 — география заказов WB, 2/3 — остатки WB, 3/3 — продажи WB для расчёта % выкупа.";
       } else {
         title.innerText = "📤 Загрузка Ozon";
         hint.innerText = "В этом режиме доступны только файлы для оптимизации поставок Ozon.";
@@ -179,13 +182,13 @@
       const uploadBtn = document.getElementById("uploadBtn");
       const progress = document.getElementById("progress");
 
-      if (!marketplace || !STAGES[marketplace]) {
-        status.innerText = "Ошибка: маркетплейс не определён. Откройте загрузку заново из бота.";
+      if (!fileInput.files.length) {
+        status.innerText = "Выберите файл";
         return;
       }
 
-      if (!fileInput.files.length) {
-        status.innerText = "Выберите файл";
+      if (!marketplace || !STAGES[marketplace]) {
+        status.innerText = "Ошибка: маркетплейс не определён. Откройте загрузку заново из бота.";
         return;
       }
 
@@ -286,3 +289,5 @@
   </script>
 </body>
 </html>
+
+<!-- wb 3 files including buyout report -->
